@@ -31,9 +31,12 @@ local ICON_SCRIPTS = "computer"
 
 getgenv().whscript = "Moon Hub"
 getgenv().ExecLogSecret = false
+getgenv().MoonUsuarios = getgenv().MoonUsuarios or {}
 
 local BOT_TOKEN = ""
 local CHANNEL_ID = "1558514534858366986"
+getgenv().MoonBotToken = BOT_TOKEN -- opcional: só o log/Discord usa; os comandos do painel agora vão pelo chat
+getgenv().MoonCanalCmd = "1557741323963080746"
 
 local localPlayer = players.LocalPlayer or players.PlayerAdded:Wait()
 local userId = localPlayer.UserId
@@ -41,188 +44,722 @@ local placeId = game.PlaceId
 local v1 = (gethui and gethui()) or coreGui
 
 -- ==========================================
--- TELA DE CARREGAMENTO PREMIUM (MOON HUB - 10s)
+-- 🎃 HALLOWEEN MOON HUB (visual do menu)
 -- ==========================================
-local player = game:GetService("Players").LocalPlayer
+local HW_ORANGE = Color3.fromRGB(255, 117, 24)
+local HW_ORANGE_LIGHT = Color3.fromRGB(255, 166, 64)
+local HW_WEB = Color3.fromRGB(240, 230, 215)
+local HW_DARK = Color3.fromRGB(18, 9, 4)
 
--- Puxa a foto do PERSONAGEM INTEIRO direto do Roblox
-local avatarUrl = "rbxthumb://type=Avatar&id=" .. player.UserId .. "&w=420&h=420"
+local function hwLine(parent, x1, y1, x2, y2, thick, transp)
+    local dx, dy = x2 - x1, y2 - y1
+    local f = Instance.new("Frame")
+    f.AnchorPoint = Vector2.new(0.5, 0.5)
+    f.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+    f.Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy), thick)
+    f.Rotation = math.deg(math.atan2(dy, dx))
+    f.BackgroundColor3 = HW_WEB
+    f.BackgroundTransparency = transp
+    f.BorderSizePixel = 0
+    f.Active = false
+    f.ZIndex = 60
+    f.Parent = parent
+end
 
--- SOM DE FUNDO
-local bgMusic = Instance.new("Sound")
-bgMusic.SoundId = "rbxassetid://120474679999479"
-bgMusic.Volume = 2
-bgMusic.Looped = true
-bgMusic.Parent = game:GetService("SoundService")
-bgMusic:Play()
+-- teia de aranha num canto (cx/cy: 0 = esquerda/topo, 1 = direita/baixo)
+local function hwWeb(parent, R, cx, cy)
+    local box = Instance.new("Frame")
+    box.Name = "Teia"
+    box.AnchorPoint = Vector2.new(cx, cy)
+    box.Position = UDim2.new(cx, 0, cy, 0)
+    box.Size = UDim2.fromOffset(R, R)
+    box.BackgroundTransparency = 1
+    box.BorderSizePixel = 0
+    box.Active = false
+    box.ZIndex = 60
+    box.Parent = parent
 
-local loadingGui = Instance.new("ScreenGui")
-loadingGui.Name = "MoonHubLoading"
-loadingGui.IgnoreGuiInset = true
-loadingGui.ResetOnSpawn = false
-loadingGui.DisplayOrder = 999999
-loadingGui.Parent = v1
+    local function P(x, y)
+        return (cx == 0) and x or (R - x), (cy == 0) and y or (R - y)
+    end
 
--- IMAGEM DE FUNDO
-local bgImage = Instance.new("ImageLabel")
-bgImage.Size = UDim2.new(1, 0, 1, 0)
-bgImage.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
-bgImage.Image = "rbxassetid://125198326455541"
-bgImage.ScaleType = Enum.ScaleType.Crop
-bgImage.ZIndex = 1
-bgImage.Parent = loadingGui
+    local radials, rings = 6, 5
+    for i = 0, radials - 1 do
+        local a = math.rad(i * 90 / (radials - 1))
+        local x2, y2 = P(R * math.cos(a), R * math.sin(a))
+        local x1, y1 = P(0, 0)
+        hwLine(box, x1, y1, x2, y2, 1, 0.45)
+    end
+    for k = 1, rings do
+        local r = R * k / rings
+        for i = 0, radials - 2 do
+            local a1 = math.rad(i * 90 / (radials - 1))
+            local a2 = math.rad((i + 1) * 90 / (radials - 1))
+            local ax, ay = r * math.cos(a1), r * math.sin(a1)
+            local bx, by = r * math.cos(a2), r * math.sin(a2)
+            local mx, my = (ax + bx) / 2 * 0.86, (ay + by) / 2 * 0.86
+            local pax, pay = P(ax, ay)
+            local pmx, pmy = P(mx, my)
+            local pbx, pby = P(bx, by)
+            hwLine(box, pax, pay, pmx, pmy, 1, 0.55)
+            hwLine(box, pmx, pmy, pbx, pby, 1, 0.55)
+        end
+    end
+end
 
--- OVERLAY ESCURO
-local darkOverlay = Instance.new("Frame")
-darkOverlay.Size = UDim2.new(1, 0, 1, 0)
-darkOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-darkOverlay.BackgroundTransparency = 0.3
-darkOverlay.ZIndex = 2
-darkOverlay.Parent = loadingGui
+local function hwDecorate(gui, titulo)
+    -- A janela é o primeiro ancestral grande do título.
+    -- A decoração fica numa ScreenGui separada (não mexe na estrutura interna dos menus).
+    local view = gui.AbsoluteSize
+    local alvo
+    local cur = titulo.Parent
+    while cur and cur ~= gui do
+        if cur:IsA("GuiObject") then
+            local s = cur.AbsoluteSize
+            local cheia = s.X >= view.X * 0.97 and s.Y >= view.Y * 0.97
+            if s.X >= 400 and s.Y >= 260 and not cheia then alvo = cur break end
+        end
+        cur = cur.Parent
+    end
+    local ehWindUI = string.sub(gui.Name, 1, 6) == "WindUI"
+    if not ehWindUI then
+        -- menu redz: a janela visível tem a mesma largura da barra do título.
+        -- Pega o maior ancestral com essa mesma largura/posição (ignora molduras maiores).
+        local barra
+        local c = titulo.Parent
+        while c and c ~= gui do
+            if c:IsA("GuiObject") and c.AbsoluteSize.X >= 400 and c.AbsoluteSize.X < view.X * 0.97 then barra = c break end
+            c = c.Parent
+        end
+        if barra then
+            local melhor, melhorAlt = nil, 0
+            local c2 = barra
+            while c2 and c2 ~= gui do
+                if c2:IsA("GuiObject") then
+                    local s2, p2 = c2.AbsoluteSize, c2.AbsolutePosition
+                    local mesmaLargura = math.abs(s2.X - barra.AbsoluteSize.X) <= 14 and math.abs(p2.X - barra.AbsolutePosition.X) <= 14
+                    if mesmaLargura and s2.Y > melhorAlt and s2.Y < view.Y * 0.97 then
+                        melhor, melhorAlt = c2, s2.Y
+                    end
+                end
+                c2 = c2.Parent
+            end
+            if melhor then alvo = melhor end
+        end
+    end
+    if not alvo then return end
 
--- ANEL GIRATÓRIO (ROXO)
-local glowRing = Instance.new("Frame")
-glowRing.Size = UDim2.new(0, 220, 0, 220)
-glowRing.Position = UDim2.new(0.5, -110, 0.35, -110)
-glowRing.BackgroundTransparency = 1
-glowRing.ZIndex = 3
-glowRing.Parent = loadingGui
-Instance.new("UICorner", glowRing).CornerRadius = UDim.new(1, 0)
-local ringStroke = Instance.new("UIStroke", glowRing)
-ringStroke.Color = Color3.fromRGB(148, 0, 211)
-ringStroke.Thickness = 4
-ringStroke.Transparency = 0.1
-local ringGradient = Instance.new("UIGradient", ringStroke)
-ringGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(148, 0, 211)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 255, 255))
-})
+    print("[MoonHub] Halloween: janela alvo = " .. alvo:GetFullName() .. " " .. tostring(alvo.AbsoluteSize))
 
--- FUNDO DO CÍRCULO (Fica atrás da foto)
-local circleBg = Instance.new("Frame")
-circleBg.Size = UDim2.new(0, 180, 0, 180)
-circleBg.Position = UDim2.new(0.5, -90, 0.35, -90)
-circleBg.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-circleBg.ZIndex = 4
-circleBg.Parent = loadingGui
-Instance.new("UICorner", circleBg).CornerRadius = UDim.new(1, 0)
+    local ov = Instance.new("Frame")
+    ov.Name = "MoonHalloween"
+    ov.BackgroundTransparency = 1
+    ov.BorderSizePixel = 0
+    ov.Active = false
+    ov.ClipsDescendants = true
+    ov.ZIndex = 1000
+    ov.Visible = false
+    ov.Parent = gui
+    local cor = alvo:FindFirstChildOfClass("UICorner")
+    if cor then
+        local c2 = Instance.new("UICorner")
+        c2.CornerRadius = cor.CornerRadius
+        c2.Parent = ov
+    end
 
--- FOTO DO PERSONAGEM INTEIRO (GIRANDO)
-local logo = Instance.new("ImageLabel")
-logo.Size = UDim2.new(0, 180, 0, 180)
-logo.Position = UDim2.new(0.5, -90, 0.35, -90)
-logo.BackgroundTransparency = 1
-logo.Image = avatarUrl
-logo.ScaleType = Enum.ScaleType.Fit 
-logo.ZIndex = 5
-logo.Parent = loadingGui
-Instance.new("UICorner", logo).CornerRadius = UDim.new(1, 0)
-local logoStroke = Instance.new("UIStroke", logo)
-logoStroke.Color = Color3.fromRGB(255, 255, 255)
-logoStroke.Thickness = 2
+    -- sonda de escala: se a ScreenGui tiver UIScale, o overlay herda a escala
+    -- e ficava maior que o menu. Medimos a escala real com um frame de 100px.
+    local sonda = Instance.new("Frame")
+    sonda.Name = "Sonda"
+    sonda.Size = UDim2.fromOffset(100, 100)
+    sonda.BackgroundTransparency = 1
+    sonda.BorderSizePixel = 0
+    sonda.Active = false
+    sonda.Parent = ov
 
--- TEXTO "MOON HUB"
-local titleText = Instance.new("TextLabel")
-titleText.Size = UDim2.new(1, 0, 0, 50)
-titleText.Position = UDim2.new(0, 0, 0.58, 0)
-titleText.BackgroundTransparency = 1
-titleText.Text = "MOON HUB"
-titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleText.Font = Enum.Font.FredokaOne
-titleText.TextSize = 45
-titleText.TextStrokeTransparency = 0.5
-titleText.ZIndex = 10
-titleText.Parent = loadingGui
+    -- contorno laranja pulsando
+    local glow = Instance.new("UIStroke")
+    glow.Color = HW_ORANGE
+    glow.Thickness = 2
+    glow.Transparency = 0.1
+    glow.Parent = ov
+    tweenService:Create(glow, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+        Thickness = 4, Transparency = 0.4
+    }):Play()
 
--- TEXTO "CARREGANDO..."
-local subText = Instance.new("TextLabel")
-subText.Size = UDim2.new(1, 0, 0, 30)
-subText.Position = UDim2.new(0, 0, 0.64, 0)
-subText.BackgroundTransparency = 1
-subText.Text = "Bem-vindo, " .. player.Name .. "..."
-subText.TextColor3 = Color3.fromRGB(200, 200, 200)
-subText.Font = Enum.Font.GothamBold
-subText.TextSize = 16
-subText.ZIndex = 10
-subText.Parent = loadingGui
+    -- teias de aranha nos 4 cantos
+    local tTopo, tBase = 110, 60
+    if not ehWindUI then tTopo, tBase = 95, 55 end
+    hwWeb(ov, tTopo, 0, 0)
+    hwWeb(ov, tTopo, 1, 0)
+    hwWeb(ov, tBase, 0, 1)
+    hwWeb(ov, tBase, 1, 1)
 
--- BARRA DE PROGRESSO (FUNDO)
-local barBg = Instance.new("Frame")
-barBg.Size = UDim2.new(0.4, 0, 0, 10)
-barBg.Position = UDim2.new(0.3, 0, 0.75, 0)
-barBg.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-barBg.ZIndex = 10
-barBg.Parent = loadingGui
-Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    -- aranha pendurada balançando
+    local holder = Instance.new("Frame")
+    holder.AnchorPoint = Vector2.new(0.5, 0)
+    holder.Position = UDim2.new(0.78, 0, 0, 0)
+    holder.Size = UDim2.fromOffset(26, 50)
+    holder.BackgroundTransparency = 1
+    holder.ZIndex = 61
+    holder.Parent = ov
+    local fio = Instance.new("Frame")
+    fio.AnchorPoint = Vector2.new(0.5, 0)
+    fio.Position = UDim2.new(0.5, 0, 0, 0)
+    fio.Size = UDim2.new(0, 1, 1, -12)
+    fio.BackgroundColor3 = HW_WEB
+    fio.BackgroundTransparency = 0.2
+    fio.BorderSizePixel = 0
+    fio.ZIndex = 61
+    fio.Parent = holder
+    local aranha = Instance.new("TextLabel")
+    aranha.AnchorPoint = Vector2.new(0.5, 1)
+    aranha.Position = UDim2.new(0.5, 0, 1, 0)
+    aranha.Size = UDim2.fromOffset(26, 26)
+    aranha.BackgroundTransparency = 1
+    aranha.Text = "🕷️"
+    aranha.TextSize = 22
+    aranha.ZIndex = 62
+    aranha.Parent = holder
+    tweenService:Create(holder, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+        Size = UDim2.fromOffset(26, 95)
+    }):Play()
 
--- BARRA DE PROGRESSO (ANIMADA)
-local barFill = Instance.new("Frame")
-barFill.Size = UDim2.new(0, 0, 1, 0)
-barFill.BackgroundColor3 = Color3.fromRGB(148, 0, 211)
-barFill.ZIndex = 11
-barFill.Parent = barBg
-Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
-local barGradient = Instance.new("UIGradient", barFill)
-barGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(148, 0, 211)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 255, 255))
-})
+    -- ==========================================================
+    -- 🦇 MORCEGOS REALISTAS + 🏰 CASTELO (tudo desenhado com Frames, sem emoji)
+    -- ==========================================================
+    local COR_MORCEGO = Color3.fromRGB(38, 30, 50)
+    local COR_CASTELO = Color3.fromRGB(12, 8, 18)
+    local COR_JANELA = Color3.fromRGB(255, 184, 76)
 
--- PARTÍCULAS FLUTUANDO (ESTRELAS)
-task.spawn(function()
-    for i = 1, 40 do
-        local particle = Instance.new("Frame")
-        particle.Size = UDim2.new(0, math.random(2, 5), 0, math.random(2, 5))
-        particle.Position = UDim2.new(math.random(), 0, math.random(), 0)
-        particle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        particle.BackgroundTransparency = math.random(40, 80) / 100
-        particle.BorderSizePixel = 0
-        particle.ZIndex = 12
-        particle.Parent = loadingGui
-        Instance.new("UICorner", particle).CornerRadius = UDim.new(1, 0)
-        
-        task.spawn(function()
-            while particle and particle.Parent do
-                local speed = math.random(4, 9)
-                local goalPos = UDim2.new(particle.Position.X.Scale, 0, -0.1, 0)
-                game:GetService("TweenService"):Create(particle, TweenInfo.new(speed, Enum.EasingStyle.Linear), {Position = goalPos}):Play()
-                task.wait(speed)
-                particle.Position = UDim2.new(math.random(), 0, 1.1, 0)
+    local function arred(f, r)
+        local c = Instance.new("UICorner")
+        c.CornerRadius = r
+        c.Parent = f
+    end
+
+    local function seg(parent, z)
+        local f = Instance.new("Frame")
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.BackgroundColor3 = COR_MORCEGO
+        f.BorderSizePixel = 0
+        f.Active = false
+        f.ZIndex = z
+        f.Parent = parent
+        return f
+    end
+
+    local function setSeg(f, x1, y1, x2, y2, grossura)
+        local dx, dy = x2 - x1, y2 - y1
+        f.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+        f.Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + 1, grossura)
+        f.Rotation = math.deg(math.atan2(dy, dx))
+    end
+
+    -- formato da asa (unidades, relativo ao ombro; asa direita)
+    local PULSO = { 8, -7 }
+    local PA, PB, PC, PD, PE = { 19, -4 }, { 17, 3 }, { 12, 8.5 }, { 6, 9.5 }, { 1, 6 }
+    local function meio(a, b)
+        local mx, my = (a[1] + b[1]) / 2, (a[2] + b[2]) / 2
+        return { mx + (PULSO[1] - mx) * 0.25, my + (PULSO[2] - my) * 0.25 }
+    end
+    -- borda de trás da asa com "recortes" entre os dedos, igual asa de morcego de verdade
+    local BORDA = { PA, meio(PA, PB), PB, meio(PB, PC), PC, meio(PC, PD), PD, meio(PD, PE), PE }
+
+    local function rotPonto(p, sg, ox, oy, c, sn, enc, s)
+        local px, py = p[1] * enc, p[2]
+        local rx = px * c + py * sn
+        local ry = -px * sn + py * c
+        return ox + sg * rx * s, oy + ry * s
+    end
+
+    local function makeBat(parent, s, z)
+        local root = Instance.new("Frame")
+        root.AnchorPoint = Vector2.new(0.5, 0.5)
+        root.Size = UDim2.fromOffset(0, 0)
+        root.BackgroundTransparency = 1
+        root.BorderSizePixel = 0
+        root.Active = false
+        root.ZIndex = z
+        root.Parent = parent
+
+        local function parte(cx, cy, w, h, rot, cor, zz, redondo)
+            local f = Instance.new("Frame")
+            f.AnchorPoint = Vector2.new(0.5, 0.5)
+            f.Position = UDim2.fromOffset(cx * s, cy * s)
+            f.Size = UDim2.fromOffset(w * s, h * s)
+            f.Rotation = rot or 0
+            f.BackgroundColor3 = cor
+            f.BorderSizePixel = 0
+            f.Active = false
+            f.ZIndex = zz
+            f.Parent = root
+            if redondo then arred(f, UDim.new(1, 0)) end
+            return f
+        end
+
+        -- corpo, cabeça, orelhas pontudas e olhinhos vermelhos
+        parte(0, 1.5, 6, 10, 0, COR_MORCEGO, z + 1, true)
+        parte(0, -4.2, 5.2, 5.2, 0, COR_MORCEGO, z + 1, true)
+        parte(-1.7, -7.2, 1.8, 3.6, -14, COR_MORCEGO, z + 1, false)
+        parte(1.7, -7.2, 1.8, 3.6, 14, COR_MORCEGO, z + 1, false)
+        parte(-1, -4.4, 1.2, 1.2, 0, Color3.fromRGB(255, 70, 50), z + 2, true)
+        parte(1, -4.4, 1.2, 1.2, 0, Color3.fromRGB(255, 70, 50), z + 2, true)
+
+        -- asas (membrana feita de várias faixas partindo do "pulso")
+        local asas = {}
+        for lado = 1, 2 do
+            local w = { sinal = (lado == 1) and 1 or -1, fan = {}, int = {} }
+            w.ossoA = seg(root, z)
+            w.ossoB = seg(root, z)
+            for i = 1, #BORDA do w.fan[i] = seg(root, z) end
+            for i = 1, 3 do w.int[i] = seg(root, z) end
+            asas[lado] = w
+        end
+
+        local obj = { root = root }
+        function obj.set(x, y, t, fase)
+            root.Position = UDim2.fromOffset(x, y)
+            local phi = 0.85 * math.sin(t * 20 + (fase or 0)) - 0.05
+            local c, sn = math.cos(phi), math.sin(phi)
+            local enc = 1 - 0.22 * math.abs(sn)
+            for _, w in ipairs(asas) do
+                local sg = w.sinal
+                local ox, oy = sg * 2 * s, -1 * s
+                local wx, wy = rotPonto(PULSO, sg, ox, oy, c, sn, enc, s)
+                setSeg(w.ossoA, ox, oy, wx, wy, 1.6 * s)
+                local ax, ay = rotPonto(BORDA[1], sg, ox, oy, c, sn, enc, s)
+                setSeg(w.ossoB, wx, wy, ax, ay, 1.6 * s)
+                for i = 1, #BORDA do
+                    local bx, by = rotPonto(BORDA[i], sg, ox, oy, c, sn, enc, s)
+                    setSeg(w.fan[i], wx, wy, bx, by, 4.2 * s)
+                end
+                local ex, ey = rotPonto(BORDA[#BORDA], sg, ox, oy, c, sn, enc, s)
+                for i = 1, 3 do
+                    local f = i / 4
+                    setSeg(w.int[i], ex, ey, ox + (wx - ox) * f, oy + (wy - oy) * f, 3.4 * s)
+                end
+            end
+        end
+        function obj.destroy() root:Destroy() end
+        obj.set(-200, -200, 0, 0)
+        return obj
+    end
+
+    -- motor de animação único (30 fps) para todos os morcegos
+    local motor = {}
+    local tMotor, acc = 0, 0
+    local motorConn
+    motorConn = runService.Heartbeat:Connect(function(dt)
+        if not ov.Parent then motorConn:Disconnect() return end
+        acc = acc + dt
+        if acc < 1 / 30 then return end
+        local passo = acc
+        acc = 0
+        if not ov.Visible then return end
+        tMotor = tMotor + passo
+        for i = #motor, 1, -1 do
+            if motor[i](tMotor, passo) then table.remove(motor, i) end
+        end
+    end)
+
+    -- castelo ao lado do nome do script (lua cheia, torres com telhado, janelas acesas)
+    local altCastelo = math.clamp(titulo.AbsoluteSize.Y, 30, 42)
+    local K = altCastelo / 52
+    local castelo = Instance.new("Frame")
+    castelo.Name = "Castelo"
+    castelo.BackgroundTransparency = 1
+    castelo.BorderSizePixel = 0
+    castelo.Active = false
+    castelo.ZIndex = 63
+    castelo.Size = UDim2.fromOffset(72 * K, 52 * K)
+    castelo.Parent = ov
+
+    local function R(x, y, w, h, cor, z, transp)
+        local f = Instance.new("Frame")
+        f.Position = UDim2.fromOffset(x * K, y * K)
+        f.Size = UDim2.fromOffset(w * K, h * K)
+        f.BackgroundColor3 = cor
+        f.BackgroundTransparency = transp or 0
+        f.BorderSizePixel = 0
+        f.Active = false
+        f.ZIndex = z
+        f.Parent = castelo
+        return f
+    end
+
+    local function telhado(cx, yTopo, base, altura)
+        local n = math.max(3, math.floor(altura / 1.4))
+        local passo = altura / n
+        for i = 1, n do
+            local w = base * i / n
+            R(cx - w / 2, yTopo + (i - 1) * passo, w, passo + 0.6, COR_CASTELO, 64)
+        end
+    end
+
+    -- lua
+    local lua = R(43, 3, 22, 22, Color3.fromRGB(232, 52, 44), 63, 0.05)
+    arred(lua, UDim.new(1, 0))
+    local luaBrilho = Instance.new("UIStroke")
+    luaBrilho.Color = Color3.fromRGB(255, 70, 60)
+    luaBrilho.Thickness = 3
+    luaBrilho.Transparency = 0.65
+    luaBrilho.Parent = lua
+    arred(R(48, 8, 4, 4, Color3.fromRGB(190, 36, 34), 63, 0.45), UDim.new(1, 0))
+    arred(R(56, 14, 3, 3, Color3.fromRGB(190, 36, 34), 63, 0.45), UDim.new(1, 0))
+
+    -- muralha, torres e torre central
+    R(8, 34, 56, 18, COR_CASTELO, 64)
+    for x = 8, 58, 7 do R(x, 31, 4, 3.2, COR_CASTELO, 64) end
+    R(3, 20, 12, 32, COR_CASTELO, 64)
+    R(1, 19, 16, 2.4, COR_CASTELO, 64)
+    telhado(9, 8, 16, 12)
+    R(57, 22, 12, 30, COR_CASTELO, 64)
+    R(55, 21, 16, 2.4, COR_CASTELO, 64)
+    telhado(63, 10, 16, 12)
+    R(22, 18, 28, 34, COR_CASTELO, 64)
+    for i = 0, 3 do R(22 + i * 8, 14.8, 4, 3.4, COR_CASTELO, 64) end
+    R(31, 9, 10, 10, COR_CASTELO, 64)
+    telhado(36, 0, 14, 9)
+    R(35.6, -2, 0.8, 4, COR_CASTELO, 64) -- mastro
+
+    -- portão aceso + janelas
+    local portao = R(33, 40, 6, 12, Color3.fromRGB(255, 150, 50), 65, 0.3)
+    arred(portao, UDim.new(0, 3))
+    local janelas = { portao }
+    for _, pos in ipairs({ {7.6, 28}, {60, 30}, {27, 26}, {43, 26}, {35, 12.5}, {35, 28} }) do
+        table.insert(janelas, R(pos[1], pos[2], 2.6, 4.4, COR_JANELA, 65, 0.1))
+    end
+    task.spawn(function()
+        while ov and ov.Parent do
+            for _, j in ipairs(janelas) do
+                if math.random() < 0.35 then
+                    tweenService:Create(j, TweenInfo.new(0.4), { BackgroundTransparency = math.random(0, 55) / 100 }):Play()
+                end
+            end
+            task.wait(math.random(6, 14) / 10)
+        end
+    end)
+
+    -- 3 morcegos pequenos rodeando a lua
+    for i = 1, 3 do
+        local b = makeBat(castelo, 0.5 + i * 0.08, 66)
+        local fase = i * 2.1
+        local vel = 0.7 + i * 0.25
+        local rx, ry = 14 + i * 4, 8 + i * 2
+        table.insert(motor, function(t)
+            local a = t * vel + fase
+            b.set(54 * K + math.cos(a) * rx, 14 * K + math.sin(a * 1.3) * ry, t, fase)
+        end)
+    end
+
+    -- morcegos grandes cruzando a janela
+    local cruzando = 0
+    local function lancarMorcego()
+        local larg, alt = ov.Size.X.Offset, ov.Size.Y.Offset
+        if larg < 100 then return end
+        cruzando = cruzando + 1
+        local b = makeBat(ov, 1.2, 66)
+        local dir = (math.random() < 0.5) and 1 or -1
+        local x0 = (dir == 1) and -45 or (larg + 45)
+        local y0 = math.random(10, 30) / 100 * alt
+        local vel = math.random(70, 120)
+        local fase = math.random() * 6
+        local ini
+        table.insert(motor, function(t)
+            ini = ini or t
+            local el = t - ini
+            local x = x0 + dir * vel * el
+            local y = y0 + math.sin(el * 2.1 + fase) * 10 + math.sin(el * 0.8) * 7
+            b.set(x, y, t, fase)
+            if (dir == 1 and x > larg + 50) or (dir == -1 and x < -50) then
+                b.destroy()
+                cruzando = cruzando - 1
+                return true
             end
         end)
     end
-end)
+    task.spawn(function()
+        task.wait(2)
+        while ov and ov.Parent do
+            if ov.Visible and cruzando < 3 then lancarMorcego() end
+            task.wait(math.random(35, 80) / 10)
+        end
+    end)
 
--- INICIAR ANIMAÇÕES
-game:GetService("TweenService"):Create(barFill, TweenInfo.new(9.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+    -- ==========================================================
+    -- 🎃 ACESSÓRIOS HALLOWEEN: névoa vermelha, cemitério, galhos secos, abóbora e velas
+    -- ==========================================================
+    local function caixa(parent, x, y, w, h, cor, z, transp, redondo)
+        local f = Instance.new("Frame")
+        f.Position = UDim2.fromOffset(x, y)
+        f.Size = UDim2.fromOffset(w, h)
+        f.BackgroundColor3 = cor
+        f.BackgroundTransparency = transp or 0
+        f.BorderSizePixel = 0
+        f.Active = false
+        f.ZIndex = z
+        f.Parent = parent
+        if redondo then arred(f, UDim.new(1, 0)) end
+        return f
+    end
+
+    local function triP(parent, cx, yTopo, base, altura, cor, z)
+        local n = math.max(3, math.floor(altura / 1.2))
+        local passo = altura / n
+        local lista = {}
+        for i = 1, n do
+            local w = base * i / n
+            table.insert(lista, caixa(parent, cx - w / 2, yTopo + (i - 1) * passo, w, passo + 0.6, cor, z))
+        end
+        return lista
+    end
+
+    -- névoa vermelha no rodapé
+    local nevoa = Instance.new("Frame")
+    nevoa.Name = "Nevoa"
+    nevoa.AnchorPoint = Vector2.new(0, 1)
+    nevoa.Position = UDim2.new(0, 0, 1, 0)
+    nevoa.Size = UDim2.new(1, 0, 0, 70)
+    nevoa.BackgroundColor3 = Color3.fromRGB(190, 25, 25)
+    nevoa.BorderSizePixel = 0
+    nevoa.Active = false
+    nevoa.ZIndex = 59
+    nevoa.Parent = ov
+    local nevoaGrad = Instance.new("UIGradient")
+    nevoaGrad.Rotation = 90
+    nevoaGrad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(1, 0.62),
+    })
+    nevoaGrad.Parent = nevoa
+    tweenService:Create(nevoa, TweenInfo.new(3.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+        BackgroundTransparency = 0.3
+    }):Play()
+
+    -- cemitério (lápides e cruzes) na base da janela
+    local cem = Instance.new("Frame")
+    cem.Name = "Cemiterio"
+    cem.AnchorPoint = Vector2.new(0, 1)
+    cem.Position = UDim2.new(0, 0, 1, 3)
+    cem.Size = UDim2.new(1, 0, 0, 24)
+    cem.BackgroundTransparency = 1
+    cem.BorderSizePixel = 0
+    cem.Active = false
+    cem.ZIndex = 60
+    cem.Parent = ov
+    local COR_LAPIDE = Color3.fromRGB(10, 5, 12)
+    for _, l in ipairs({ {0.06, 1}, {0.13, 3}, {0.27, 2}, {0.34, 1}, {0.47, 3}, {0.55, 2}, {0.64, 1}, {0.72, 3}, {0.83, 2}, {0.9, 1} }) do
+        local g = Instance.new("Frame")
+        g.AnchorPoint = Vector2.new(0.5, 1)
+        g.Position = UDim2.new(l[1], 0, 1, 0)
+        g.Size = UDim2.fromOffset(14, 22)
+        g.BackgroundTransparency = 1
+        g.BorderSizePixel = 0
+        g.Active = false
+        g.ZIndex = 60
+        g.Parent = cem
+        if l[2] == 3 then
+            caixa(g, 5.5, 3, 3, 19, COR_LAPIDE, 60, 0.4)
+            caixa(g, 1.5, 7, 11, 3, COR_LAPIDE, 60, 0.4)
+        else
+            local alt = 12 + l[2] * 4
+            local lap = caixa(g, 2, 22 - alt, 10, alt, COR_LAPIDE, 60, 0.4)
+            arred(lap, UDim.new(0, 5))
+        end
+    end
+
+    -- galhos secos saindo da borda esquerda
+    local rng = Random.new(11)
+    local ramosBase = Instance.new("Frame")
+    ramosBase.Name = "Galhos"
+    ramosBase.Position = UDim2.new(0, 0, 0.64, 0)
+    ramosBase.Size = UDim2.fromOffset(0, 0)
+    ramosBase.BackgroundTransparency = 1
+    ramosBase.BorderSizePixel = 0
+    ramosBase.Active = false
+    ramosBase.ZIndex = 60
+    ramosBase.Parent = ov
+    local function ramificar(x, y, ang, len, grossura, prof)
+        local x2, y2 = x + math.cos(ang) * len, y + math.sin(ang) * len
+        local f = seg(ramosBase, 60)
+        f.BackgroundColor3 = Color3.fromRGB(78, 22, 26)
+        f.BackgroundTransparency = 0.25
+        setSeg(f, x, y, x2, y2, grossura)
+        if prof > 0 then
+            local g2 = math.max(grossura * 0.7, 1)
+            ramificar(x2, y2, ang - 0.45 - rng:NextNumber() * 0.2, len * 0.72, g2, prof - 1)
+            ramificar(x2, y2, ang + 0.4 + rng:NextNumber() * 0.25, len * 0.7, g2, prof - 1)
+        end
+    end
+    ramificar(-4, 0, -0.35, 34, 4, 4)
+    ramificar(-4, 16, 0.15, 26, 3, 3)
+
+    -- abóbora de Halloween + velas acesas (canto inferior esquerdo)
+    local ab = Instance.new("Frame")
+    ab.Name = "AboboraVelas"
+    ab.AnchorPoint = Vector2.new(0, 1)
+    ab.Position = UDim2.new(0, 12, 1, -8)
+    ab.Size = UDim2.fromOffset(100, 62)
+    ab.BackgroundTransparency = 1
+    ab.BorderSizePixel = 0
+    ab.Active = false
+    ab.ZIndex = 61
+    ab.Parent = ov
+
+    caixa(ab, -6, 8, 64, 56, Color3.fromRGB(255, 120, 20), 61, 0.88, true) -- brilho em volta
+    caixa(ab, 2, 18, 22, 40, Color3.fromRGB(196, 72, 8), 62, 0, true)       -- gomo esquerdo
+    caixa(ab, 28, 18, 22, 40, Color3.fromRGB(196, 72, 8), 62, 0, true)      -- gomo direito
+    caixa(ab, 12, 14, 26, 44, Color3.fromRGB(255, 122, 24), 63, 0, true)    -- gomo central
+    caixa(ab, 17, 17, 9, 36, Color3.fromRGB(255, 160, 60), 63, 0.45, true)  -- reflexo
+    local cabo = caixa(ab, 22, 5, 6, 11, Color3.fromRGB(72, 98, 32), 62)
+    cabo.Rotation = 14
+    arred(cabo, UDim.new(0, 2))
+
+    local COR_ROSTO = Color3.fromRGB(255, 212, 92)
+    local rosto = {}
+    for _, f in ipairs(triP(ab, 17, 28, 9, 8, COR_ROSTO, 64)) do table.insert(rosto, f) end
+    for _, f in ipairs(triP(ab, 34, 28, 9, 8, COR_ROSTO, 64)) do table.insert(rosto, f) end
+    for _, f in ipairs(triP(ab, 25.5, 38, 5, 4, COR_ROSTO, 64)) do table.insert(rosto, f) end
+    local boca = caixa(ab, 13, 45, 25, 6, COR_ROSTO, 64)
+    arred(boca, UDim.new(0, 2))
+    table.insert(rosto, boca)
+    caixa(ab, 18, 44.6, 3.5, 3, Color3.fromRGB(255, 122, 24), 65)
+    caixa(ab, 30, 48.4, 3.5, 3, Color3.fromRGB(255, 122, 24), 65)
+
+    local chamas = {}
+    for _, v in ipairs({ {58, 16}, {70, 28}, {83, 20} }) do
+        local x, h = v[1], v[2]
+        local topo = 58 - h
+        caixa(ab, x, topo, 6, h, Color3.fromRGB(238, 226, 192), 62)
+        caixa(ab, x + 4, topo, 2, h, Color3.fromRGB(205, 190, 150), 62)
+        caixa(ab, x + 2.6, topo - 3, 0.8, 3, Color3.fromRGB(30, 20, 20), 63)
+        local brilho = caixa(ab, x + 3 - 11, topo - 7 - 11, 22, 22, Color3.fromRGB(255, 150, 40), 61, 0.82, true)
+        local chama = caixa(ab, x + 0.5, topo - 12, 5, 9, Color3.fromRGB(255, 196, 80), 63, 0, true)
+        chama.AnchorPoint = Vector2.new(0.5, 1)
+        chama.Position = UDim2.fromOffset(x + 3, topo - 2)
+        local esc = Instance.new("UIScale")
+        esc.Parent = chama
+        local miolo = caixa(chama, 1.2, 3, 2.6, 5, Color3.fromRGB(255, 245, 205), 64, 0, true)
+        table.insert(chamas, { esc = esc, brilho = brilho, miolo = miolo })
+    end
+
+    -- tremulação das chamas e do rosto da abóbora
+    task.spawn(function()
+        while ov and ov.Parent do
+            for _, c in ipairs(chamas) do
+                tweenService:Create(c.esc, TweenInfo.new(0.14), { Scale = math.random(80, 125) / 100 }):Play()
+                tweenService:Create(c.brilho, TweenInfo.new(0.14), { BackgroundTransparency = math.random(74, 90) / 100 }):Play()
+            end
+            local t = math.random(0, 28) / 100
+            for _, f in ipairs(rosto) do
+                tweenService:Create(f, TweenInfo.new(0.14), { BackgroundTransparency = t }):Play()
+            end
+            task.wait(math.random(10, 22) / 100)
+        end
+    end)
+
+    -- a camada acompanha a janela (posição, tamanho e visibilidade)
+    local conn
+    local desloc = Vector2.new(0, 0)      -- diferença entre AbsolutePosition e Position (inset)
+    local posAtual, posAnterior = Vector2.new(0, 0), Vector2.new(1e9, 1e9)
+    local ultimoAlvo
+    conn = runService.Heartbeat:Connect(function()
+        if not alvo.Parent or not gui.Parent or not ov.Parent then
+            conn:Disconnect()
+            pcall(function() ov:Destroy() end)
+            return
+        end
+        local s = alvo.AbsoluteSize
+        local vis = gui.Enabled and s.X >= 400 and s.Y >= 260
+        local o = alvo
+        while vis and o and o ~= gui do
+            if o:IsA("GuiObject") and not o.Visible then vis = false end
+            o = o.Parent
+        end
+        ov.Visible = vis
+        if not vis then return end
+
+        local p = alvo.AbsolutePosition
+        -- escala herdada (1 = sem UIScale)
+        local k = sonda.AbsoluteSize.X / 100
+        if k < 0.2 or k > 5 then k = 1 end
+        -- calibra: quando a janela está parada e a posição não mudou nos 2 últimos frames
+        if ultimoAlvo and (p - ultimoAlvo).Magnitude < 0.5 and posAtual == posAnterior then
+            desloc = ov.AbsolutePosition - posAtual * k
+        end
+        ultimoAlvo = p
+        local np = Vector2.new((p.X - desloc.X) / k, (p.Y - desloc.Y) / k)
+        posAnterior, posAtual = posAtual, np
+        ov.Position = UDim2.fromOffset(np.X, np.Y)
+        ov.Size = UDim2.fromOffset(s.X / k, s.Y / k)
+
+        -- castelo fica ao lado do nome do script
+        if titulo.Parent then
+            local tp, ts = titulo.AbsolutePosition, titulo.AbsoluteSize
+            local tb = titulo.TextBounds.X
+            local ini = tp.X
+            if titulo.TextXAlignment == Enum.TextXAlignment.Center then
+                ini = tp.X + ts.X / 2 - tb / 2
+            elseif titulo.TextXAlignment == Enum.TextXAlignment.Right then
+                ini = tp.X + ts.X - tb
+            end
+            local cw, ch = castelo.Size.X.Offset, castelo.Size.Y.Offset
+            local cx = math.min((ini + tb - p.X) / k + 8, ov.Size.X.Offset - cw - 95)
+            local cy = math.max(((tp.Y + ts.Y / 2) - p.Y) / k - ch / 2, 0)
+            castelo.Position = UDim2.fromOffset(cx, cy)
+        end
+    end)
+
+    -- título em fonte de Halloween (só mexe na aparência do texto)
+    local function estilizarTitulos()
+        for _, d in ipairs(gui:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text:lower():find("moon hub", 1, true) then
+                pcall(function()
+                    d.Font = Enum.Font.Creepster
+                    d.TextColor3 = HW_ORANGE
+                    d.TextStrokeColor3 = Color3.fromRGB(40, 10, 0)
+                    d.TextStrokeTransparency = 0.35
+                end)
+            end
+        end
+    end
+    estilizarTitulos()
+    task.delay(1.5, estilizarTitulos)
+end
+
+local hwFeito = {}
+local function hwObservar(gui)
+    if hwFeito[gui] or not gui:IsA("ScreenGui") then return end
+    task.spawn(function()
+        local t0 = os.clock()
+        while gui.Parent and os.clock() - t0 < 40 do
+            local achado
+            for _, d in ipairs(gui:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text:lower():find("moon hub", 1, true) then achado = d break end
+            end
+            if achado then
+                task.wait(1.5)
+                hwFeito[gui] = true
+                local ok, err = pcall(hwDecorate, gui, achado)
+                if not ok then warn("[MoonHub] Halloween: " .. tostring(err)) end
+                return
+            end
+            task.wait(0.5)
+        end
+    end)
+end
 
 task.spawn(function()
-    -- Gira o anel
-    while glowRing and glowRing.Parent do
-        glowRing.Rotation = glowRing.Rotation + 1.5
-        task.wait(0.01)
+    local pais = { v1, coreGui }
+    local pg = localPlayer:FindFirstChildOfClass("PlayerGui")
+    if pg then table.insert(pais, pg) end
+    for _, pai in ipairs(pais) do
+        for _, g in ipairs(pai:GetChildren()) do hwObservar(g) end
+        pai.ChildAdded:Connect(hwObservar)
     end
 end)
 
-task.spawn(function()
-    -- Gira o personagem bem devagar
-    while logo and logo.Parent do
-        logo.Rotation = logo.Rotation + 0.5
-        task.wait(0.01)
-    end
-end)
-
--- SUMIR SUAVEMENTE APÓS 10 SEGUNDOS
-task.delay(10, function()
-    game:GetService("TweenService"):Create(loadingGui, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Enabled = false}):Play()
-    
-    -- Para a música
-    bgMusic:Stop()
-    
-    task.wait(1)
-    loadingGui:Destroy()
-    bgMusic:Destroy()
-end)
 
 -- Ativa o atributo que identifica que este jogador executou o script
 localPlayer:SetAttribute("MoonHubAtivo", true)
@@ -232,8 +769,11 @@ local WhitelistedUsers = {
     "v7z_0",
     "roblox_user_5530552598",
     "Lucaskaioshinv2",
-    "farminfinita001"
+    "farminfinita001",
+    "Samuelmi244_2"
 }
+getgenv().MoonAdmins = {}
+for _, n in ipairs(WhitelistedUsers) do getgenv().MoonAdmins[n:lower()] = true end
 
 -- [CORREÃ‡ÃƒO] A funÃ§Ã£o agora valida diretamente o nome na Whitelist para liberar o admin
 local function isAllowed()
@@ -371,189 +911,6 @@ screen.Parent = v1
     end)
   end)
 
-  local function makeTextLabel()
-    local v34 = {}
-    v34.completed = false
-    v34.connection = nil
-
-    pcall(function()
-      if coreGui:FindFirstChild("LoadingScreen") then
-        coreGui.LoadingScreen:Destroy()
-      end
-
-      if v1:FindFirstChild("LoadingScreen") then
-        v1.LoadingScreen:Destroy()
-      end
-    end)
-
-    local loadingScreen = Instance.new("ScreenGui")
-    loadingScreen.Name = "LoadingScreen"
-    loadingScreen.IgnoreGuiInset = true
-    loadingScreen.ResetOnSpawn = false
-    loadingScreen.Parent = v1
-
-    pcall(function() syn.protect_gui(loadingScreen) end)
-
-    local frame = Instance.new("ImageLabel")
-    frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.Image = BACKGROUND_LOADING
-    frame.BackgroundColor3 = Color3.fromRGB(15, 30, 60)
-    frame.BackgroundTransparency = 0
-    frame.Parent = loadingScreen
-
-    for i = 1, 35 do
-      local dot = Instance.new("Frame")
-      dot.Size = UDim2.new(0, math.random(6, 16), 0, math.random(6, 16))
-      dot.Position = UDim2.new(math.random(), 0, math.random(), 0)
-      dot.BackgroundColor3 = Color3.fromRGB(44, 130, 203)
-      dot.BackgroundTransparency = math.random(20, 60) / 100
-      dot.BorderSizePixel = 0
-      dot.Parent = frame
-
-      local corner = Instance.new("UICorner")
-      corner.CornerRadius = UDim.new(1, 0)
-      corner.Parent = dot
-
-      task.spawn(function()
-        while dot and dot.Parent do
-          local speed = math.random(6, 14)
-          local goalPos = UDim2.new(dot.Position.X.Scale + math.random(-0.1, 0.1), 0, -0.1, 0)
-          tweenService:Create(dot, TweenInfo.new(speed, Enum.EasingStyle.Linear), {Position = goalPos}):Play()
-          task.wait(speed)
-          dot.Position = UDim2.new(math.random(), 0, 1.1, 0)
-        end
-      end)
-    end
-
-    local bgSound = Instance.new("Sound")
-    bgSound.SoundId = "rbxassetid://1848354536"
-    bgSound.Volume = 5 
-    bgSound.Looped = true
-    bgSound.Parent = workspaceService
-    bgSound:Play()
-
-    local glowRing = Instance.new("Frame")
-    glowRing.Size = UDim2.new(0, 210, 0, 210)
-    glowRing.Position = UDim2.new(0.5, -105, 0.4, -105)
-    glowRing.BackgroundColor3 = Color3.fromRGB(44, 130, 203)
-    glowRing.BackgroundTransparency = 0.5
-    glowRing.Parent = frame
-
-    local glowCorner = Instance.new("UICorner")
-    glowCorner.CornerRadius = UDim.new(1, 0)
-    glowCorner.Parent = glowRing
-
-    local uiStroke = Instance.new("UIStroke")
-    uiStroke.Color = Color3.fromRGB(100, 180, 255)
-    uiStroke.Thickness = 4
-    uiStroke.Parent = glowRing
-
-    task.spawn(function()
-      while glowRing and glowRing.Parent do
-        tweenService:Create(glowRing, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 230, 0, 230), Position = UDim2.new(0.5, -115, 0.4, -115)}):Play()
-        task.wait(1)
-        tweenService:Create(glowRing, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 210, 0, 210), Position = UDim2.new(0.5, -105, 0.4, -105)}):Play()
-        task.wait(1)
-      end
-    end)
-
-    local avatarImg = Instance.new("ImageLabel")
-    avatarImg.Size = UDim2.new(0, 190, 0, 190)
-    avatarImg.Position = UDim2.new(0.5, -95, 0.4, -95)
-    avatarImg.BackgroundTransparency = 1
-    avatarImg.Image = avatarUrl(userId) or LOGO_PADRAO
-    avatarImg.Parent = frame
-
-    local cornerAvatar = Instance.new("UICorner")
-    cornerAvatar.CornerRadius = UDim.new(1, 0)
-    cornerAvatar.Parent = avatarImg
-
-    local avatarStroke = Instance.new("UIStroke")
-    avatarStroke.Color = Color3.fromRGB(100, 180, 255)
-    avatarStroke.Thickness = 3
-    avatarStroke.Parent = avatarImg
-
-    task.spawn(function()
-      while avatarImg and avatarImg.Parent do
-        avatarImg.Rotation = avatarImg.Rotation + 2
-        task.wait(0.01)
-      end
-    end)
-
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Size = UDim2.new(1, 0, 0, 50)
-    textLabel.Position = UDim2.new(0, 0, 0.63, 0)
-    textLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
-    textLabel.TextStrokeTransparency = 0.2
-    textLabel.BackgroundTransparency = 1
-    textLabel.Font = Enum.Font.FredokaOne
-    textLabel.TextScaled = true
-    textLabel.Text = "Moon Hub executando..."
-    textLabel.Parent = frame
-
-    local frame2 = Instance.new("Frame")
-    frame2.Size = UDim2.new(0.45, 0, 0.022, 0)
-    frame2.Position = UDim2.new(0.275, 0, 0.74, 0)
-    frame2.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
-    frame2.BorderSizePixel = 0
-    frame2.Parent = frame
-
-    local cornerBarBg = Instance.new("UICorner")
-    cornerBarBg.CornerRadius = UDim.new(1, 0)
-    cornerBarBg.Parent = frame2
-
-    local frame3 = Instance.new("Frame")
-    frame3.Size = UDim2.new(0, 0, 1, 0)
-    frame3.BackgroundColor3 = Color3.fromRGB(44, 130, 203)
-    frame3.BorderSizePixel = 0
-    frame3.Parent = frame2
-
-    local cornerBarFill = Instance.new("UICorner")
-    cornerBarFill.CornerRadius = UDim.new(1, 0)
-    cornerBarFill.Parent = frame3
-
-    local create = tweenService:Create(frame3, TweenInfo.new(
-      15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out
-    ), { Size = UDim2.new(1, 0, 1, 0) })
-
-    create:Play()
-
-    local function f29()
-      if bgSound then
-        bgSound:Stop()
-        bgSound:Destroy()
-      end
-      if loadingScreen then
-        loadingScreen:Destroy()
-      end
-
-      if v34.connection then
-        v34.connection:Disconnect()
-      end
-    end
-
-    v34.connection = create.Completed:Connect(function()
-      tweenService:Create(frame, TweenInfo.new(
-        1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out
-      ), { ImageTransparency = 1 }):Play()
-
-      task.delay(1.2, function()
-        pcall(function()
-          starterGui:SetCore("SendNotification", {
-            Title = "Moon Hub",
-            Text = "Bem-vindo Ã  Moon Hub",
-            Duration = 4,
-          })
-        end)
-
-        v34.completed = true
-        f29()
-      end)
-    end)
-
-    return v34
-  end
-
   local guisAntes = {}
   for _, parent in ipairs({v1, coreGui, localPlayer:WaitForChild("PlayerGui")}) do
     for _, g in ipairs(parent:GetChildren()) do guisAntes[g] = true end
@@ -573,8 +930,8 @@ screen.Parent = v1
   end
   print("[MoonHub] biblioteca redz carregada, criando janela...")
 
-  local window = libOuErro:MakeWindow({
-    Title = "Moon hub  |  By samuel_mi244 & Jonas",
+  window = libOuErro:MakeWindow({
+    Title = "🎃 Moon Hub Halloween 🎃  |  By samuel_mi244 & Jonas",
     SubTitle = "",
     SaveFolder = "testando | redz lib v5.lua",
   })
@@ -607,13 +964,14 @@ screen.Parent = v1
       if ehRedz and desc:IsA("ImageLabel") then
         if desc.Image:find("16073121542") or desc.Image:find("anime") or desc.Name == "ThemeImage" or (desc.Name == "ImageLabel" and desc.Size.X.Scale > 0.7) then
           desc.Image = BACKGROUND_CUSTOM
+          desc.ImageColor3 = Color3.fromRGB(255, 125, 45)
         end
       end
 
       if (ehRedz or ehWindUI) and (desc:IsA("Frame") or desc:IsA("UIStroke")) then
         local c = desc:IsA("UIStroke") and desc.Color or desc.BackgroundColor3
         if (c.R > 0.9 and c.G > 0.6 and c.B < 0.2) then
-          local targetColor = Color3.fromRGB(148, 0, 211)
+          local targetColor = Color3.fromRGB(255, 117, 24)
           if desc:IsA("UIStroke") then
             desc.Color = targetColor
           else
@@ -734,18 +1092,18 @@ end)
 end)
 
   local tab2  = window:MakeTab({ Title = "info", Icon = ICON_INFO })
-  local tab3  = window:MakeTab({ Title = "troll", Icon = ICON_TROLL })
-  local tab4  = window:MakeTab({ Title = "player", Icon = ICON_PLAYER })
-  local tab5  = window:MakeTab({ Title = "avatar", Icon = ICON_AVATAR })
-  local tab6  = window:MakeTab({ Title = "rgb", Icon = ICON_RGB })
-  local tab   = window:MakeTab({ Title = "music", Icon = ICON_MUSIC })
-  local tab7  = window:MakeTab({ Title = "teleport", Icon = ICON_TELEPORT })
-  local tab8  = window:MakeTab({ Title = "skybox/nuke", Icon = ICON_SKYBOX })
-  local tab9  = window:MakeTab({ Title = "Car", Icon = ICON_CAR })
-  local tab10 = window:MakeTab({ Title = "House", Icon = ICON_HOUSE })
-  local tab11 = window:MakeTab({ Title = "Protecao", Icon = ICON_PROTECAO })
-  local tab12 = window:MakeTab({ Title = "avatares fe", Icon = ICON_AVATAR })
-  local tab13 = window:MakeTab({ Title = "scripts", Icon = ICON_SCRIPTS })
+  tab3  = window:MakeTab({ Title = "troll", Icon = ICON_TROLL })
+  tab4  = window:MakeTab({ Title = "player", Icon = ICON_PLAYER })
+  tab5  = window:MakeTab({ Title = "avatar", Icon = ICON_AVATAR })
+  tab6  = window:MakeTab({ Title = "rgb", Icon = ICON_RGB })
+  tab   = window:MakeTab({ Title = "music", Icon = ICON_MUSIC })
+  tab7  = window:MakeTab({ Title = "teleport", Icon = ICON_TELEPORT })
+  tab8  = window:MakeTab({ Title = "skybox/nuke", Icon = ICON_SKYBOX })
+  tab9  = window:MakeTab({ Title = "Car", Icon = ICON_CAR })
+  tab10 = window:MakeTab({ Title = "House", Icon = ICON_HOUSE })
+  tab11 = window:MakeTab({ Title = "Protecao", Icon = ICON_PROTECAO })
+  tab12 = window:MakeTab({ Title = "avatares fe", Icon = ICON_AVATAR })
+  tab13 = window:MakeTab({ Title = "scripts", Icon = ICON_SCRIPTS })
 
   tab2:AddSection({ "CrÃ©ditos do Hub" })
 
@@ -807,7 +1165,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = workspace
 
-local BOT_TOKEN = ""
+local BOT_TOKEN = getgenv().MoonBotToken or ""
 local CHANNEL_ID = "1557741323963080746"
 local POLL = 2
 local TEMPO_MAX = 15
@@ -1729,6 +2087,18 @@ local HasTriggeredVerifique = false
 local function ProcessarMensagemChat(msgText, authorName)
     if not msgText or not authorName then return end
     local comandoLower = msgText:lower()
+    -- comandos do painel via chat: ";comando alvo [texto]" (só de admins da whitelist, só no alvo)
+    do
+        local cmdC, alvoC, extraC = msgText:match("^;(%w+)%s+(%S+)%s*(.*)$")
+        if cmdC and getgenv().MoonAdmins and getgenv().MoonAdmins[authorName:lower()] and getgenv().MoonExecutar then
+            cmdC = cmdC:lower()
+            if cmdC ~= "verifique" and alvoC:lower() == LocalPlayer.Name:lower() then
+                local extraFinal = (cmdC == "say") and extraC or (authorName .. " " .. extraC)
+                task.spawn(getgenv().MoonExecutar, cmdC, alvoC, extraFinal)
+            end
+            return
+        end
+    end
     if comandoLower:match("^;verifique") then
         if authorName ~= LocalPlayer.Name and not HasTriggeredVerifique then
             HasTriggeredVerifique = true
@@ -1742,6 +2112,7 @@ local function ProcessarMensagemChat(msgText, authorName)
         local authorPlayer = Players:FindFirstChild(authorName)
         if authorPlayer then
             AutorizadosDinamicos[authorName] = true
+            getgenv().MoonUsuarios[authorName] = true
             AtribuirTagCorreta(authorPlayer, "UsuÃ¡rio Moon")
         end
     end
@@ -1792,7 +2163,7 @@ local function executarComandoDiscord(cmd, alvo, extra)
     extra = extra or ""
 
     local function souOAlvo()
-        return NomeCorresponde(alvo, LocalPlayer.Name)
+        return alvo:lower() == LocalPlayer.Name:lower()  -- nome exato, sem prefixo
     end
     local function acharPlayer()
         for _, p in ipairs(Players:GetPlayers()) do
@@ -1839,12 +2210,12 @@ local function executarComandoDiscord(cmd, alvo, extra)
     elseif cmd == "unfreeze" and souOAlvo() and hum then
         hum.WalkSpeed = playerOriginalSpeed[LocalPlayer.Name:lower()] or 16
     elseif cmd == "bring" and souOAlvo() then
-        local autor = acharPlayer()
+        local autor = Players:FindFirstChild(extra:match("^(%S+)") or "")
         if autor and autor.Character and autor.Character:FindFirstChild("HumanoidRootPart") and root then
             root.CFrame = autor.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, -3)
         end
-    elseif cmd == "tp" then
-        local destino = acharPlayer()
+    elseif cmd == "tp" and souOAlvo() then
+        local destino = Players:FindFirstChild(extra:match("^(%S+)") or "")
         if destino and destino.Character and destino.Character:FindFirstChild("HumanoidRootPart") and root then
             root.CFrame = destino.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, -3)
         end
@@ -1862,7 +2233,7 @@ local function executarComandoDiscord(cmd, alvo, extra)
         CreateAndManageJail(LocalPlayer)
     elseif cmd == "unjail" and souOAlvo() then
         RemoveJail(LocalPlayer)
-    elseif cmd == "backrooms" then
+    elseif cmd == "backrooms" and souOAlvo() then
         local mapID = 10581711055
         pcall(function()
             local mapa = game:GetObjects("rbxassetid://"..mapID)[1]
@@ -1902,9 +2273,9 @@ local function executarComandoDiscord(cmd, alvo, extra)
         end)
     elseif cmd == "coolkdefect" and souOAlvo() then
         CoolkidEffect(LocalPlayer)
-    elseif cmd == "flopparain" then
+    elseif cmd == "flopparain" and souOAlvo() then
         FloppaRain()
-    elseif cmd == "stopfloppa" then
+    elseif cmd == "stopfloppa" and souOAlvo() then
         StopFloppa()
     elseif cmd == "domainexpansion" and souOAlvo() then
         DomainExpansion(LocalPlayer)
@@ -1915,7 +2286,10 @@ local function executarComandoDiscord(cmd, alvo, extra)
     end
 end
 
+getgenv().MoonExecutar = executarComandoDiscord
+
 task.spawn(function()
+    if BOT_TOKEN == "" then return end -- sem token: o Discord fica desligado
     while true do
         enviarMensagem(string.format("[USERS] %s | %s | entrada:%d",
             LocalPlayer.Name, os.date("%H:%M:%S"), HORA_ENTRADA))
@@ -1924,6 +2298,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    if BOT_TOKEN == "" then return end -- sem token: o Discord fica desligado
     print("[MoonDiscord] listener ativo. Canal: " .. CHANNEL_ID)
 
     while true do
@@ -1952,6 +2327,38 @@ if msgs and type(msgs) == "table" then
 end)
 end
 
+-- [CORREÇÃO] O painel WindUI usa Players, JUMPSCARES e enviarMensagem, mas essas
+-- variáveis só existiam dentro de outro bloco (fora de alcance aqui). Por isso o
+-- painel abria vazio, sem abas. Aqui elas são definidas de novo para o painel.
+local Players = game:GetService("Players")
+local JUMPSCARES = {
+    { Name = "jumps1", ImageId = "rbxassetid://126754882337711", AudioId = "rbxassetid://138873214826309" },
+    { Name = "jumps2", ImageId = "rbxassetid://86379969987314", AudioId = "rbxassetid://143942090" },
+    { Name = "jumps3", ImageId = "rbxassetid://127382022168206", AudioId = "rbxassetid://143942090" },
+    { Name = "jumps4", ImageId = "rbxassetid://95973611964555", AudioId = "rbxassetid://138873214826309" },
+}
+local function enviarMensagem(texto)
+    local req = (syn and syn.request) or http_request or request or (fluxus and fluxus.request)
+    if not req then return nil, "executor sem função request" end
+    local token = getgenv().MoonBotToken or BOT_TOKEN
+    local canal = getgenv().MoonCanalCmd or CHANNEL_ID
+    local ok, res = pcall(function()
+        return req({
+            Url = "https://discord.com/api/v10/channels/" .. canal .. "/messages",
+            Method = "POST",
+            Headers = {
+                ["Authorization"] = "Bot " .. token,
+                ["Content-Type"] = "application/json",
+            },
+            Body = httpService:JSONEncode({ content = texto }),
+        })
+    end)
+    if not ok then return nil, tostring(res) end
+    local codigo = res and res.StatusCode
+    if codigo and (codigo < 200 or codigo >= 300) then return nil, "HTTP " .. tostring(codigo) end
+    return res
+end
+
 local okWind, WindUI = pcall(function()
     return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 end)
@@ -1960,10 +2367,35 @@ if not okWind then
     WindUI = nil
 end
 
-if WindUI then
+local ehAdminLocal = getgenv().MoonAdmins and getgenv().MoonAdmins[game:GetService("Players").LocalPlayer.Name:lower()] == true
+if WindUI and not ehAdminLocal then
+    print("[MoonHub] Painel admin oculto: este usuário não está na WhitelistedUsers.")
+end
+if WindUI and ehAdminLocal then
   local okPainel, errPainel = pcall(function()
+    local okTema = pcall(function()
+        local base = {}
+        local temas = WindUI:GetThemes()
+        local dark = temas and temas.Dark
+        if type(dark) == "table" then
+            for k, v in pairs(dark) do base[k] = v end
+        end
+        local cores = {
+            Name = "Halloween",
+            Accent = Color3.fromRGB(255, 117, 24),
+            Dialog = Color3.fromRGB(26, 13, 6),
+            Outline = Color3.fromRGB(255, 117, 24),
+            Text = Color3.fromRGB(255, 232, 204),
+            Placeholder = Color3.fromRGB(170, 120, 80),
+            Background = Color3.fromRGB(20, 10, 4),
+            Button = Color3.fromRGB(58, 28, 10),
+            Icon = Color3.fromRGB(255, 150, 50),
+        }
+        for k, v in pairs(cores) do base[k] = v end
+        WindUI:AddTheme(base)
+    end)
     Window = WindUI:CreateWindow({
-        Title = "Moon Hub Painel",
+        Title = "🎃 Moon Hub Painel 🎃",
         Icon = "door-open",
         Author = "by: samuel_mi244 jonas",
         Folder = "MoonHub",
@@ -1971,20 +2403,71 @@ if WindUI then
         MinSize = Vector2.new(560, 350),
         MaxSize = Vector2.new(850, 560),
         Transparent = true,
-        Theme = "Dark",
+        Theme = okTema and "Halloween" or "Dark",
         Resizable = true,
         SideBarWidth = 200,
         HideSearchBar = true,
         ScrollBarEnabled = false,
-        BackgroundImageTransparency = 0.42,
-        Background = BACKGROUND_CUSTOM,
         User = { Enabled = true, Anonymous = false, Callback = function() end },
     })
 
-    local listaAlvos = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        table.insert(listaAlvos, p.Name)
+    -- [SEGURANÇA] o painel só mostra e só comanda quem está com o Moon Hub executado.
+    -- Quem executa o script responde ao ";verifique" com "Moon_####" e entra nesta lista.
+    getgenv().MoonUsuarios = getgenv().MoonUsuarios or {}
+    local function ehUsuarioMoon(nome)
+        if not nome or nome == "" then return false end
+        return Players:FindFirstChild(nome) ~= nil
     end
+    local function listaMoon()
+        local lista = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if ehUsuarioMoon(p.Name) then table.insert(lista, p.Name) end
+        end
+        return lista
+    end
+
+    local function chatEnviar(msg)
+        local enviou = false
+        pcall(function()
+            local tcs = game:GetService("TextChatService")
+            local canal = tcs.TextChannels:FindFirstChild("RBXGeneral") or tcs.TextChannels:GetChildren()[1]
+            if canal then canal:SendAsync(msg) enviou = true end
+        end)
+        if enviou then return end
+        pcall(function()
+            local ev = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+            if ev then ev.SayMessageRequest:FireServer(msg, "All") end
+        end)
+    end
+
+    local function euSouAdmin()
+        return getgenv().MoonAdmins and getgenv().MoonAdmins[Players.LocalPlayer.Name:lower()] == true
+    end
+    local function avisar(txt)
+        pcall(function() WindUI:Notify({ Title = "Moon Hub", Content = txt, Duration = 3 }) end)
+    end
+
+    -- todo comando do painel passa por aqui: vira uma mensagem de chat ";comando alvo"
+    -- que só é obedecida pelo alvo (se estiver com o Moon Hub) e só se vier de um admin da whitelist.
+    local function enviarMensagem(texto)
+        local cmd, alvo, resto = texto:match("^%[CMD%]%s+(%w+)%s+(%S+)%s*(.*)$")
+        if not cmd then return nil end
+        if not euSouAdmin() then
+            avisar("Seu usuário (" .. Players.LocalPlayer.Name .. ") não está na WhitelistedUsers do script.")
+            return nil
+        end
+        if not ehUsuarioMoon(alvo) then
+            avisar("Jogador não encontrado no servidor.")
+            return nil
+        end
+        resto = (resto:gsub("%s*t:%d+%s*$", ""))
+        if cmd == "bring" or cmd == "tp" then resto = "" end
+        chatEnviar(";" .. cmd .. " " .. alvo .. (resto ~= "" and (" " .. resto) or ""))
+        return true
+    end
+
+    local atualizarListas = function() end
+    local listaAlvos = listaMoon()
 
     local TargetName = ""
 
@@ -1998,6 +2481,12 @@ if WindUI then
         Callback = function(opt) TargetName = opt end
     })
 
+    SectionComandos:Button({
+        Title = "Atualizar lista",
+        Desc = "atualiza a lista de jogadores do servidor",
+        Callback = function() atualizarListas() end
+    })
+
     local comandos = { "kick", "kill", "killplus", "fling", "freeze", "unfreeze", "bring", "tp", "float", "jail", "unjail", "backrooms" }
     for _, cmd in ipairs(comandos) do
         SectionComandos:Button({
@@ -2005,7 +2494,20 @@ if WindUI then
             Desc = "fazer ;"..cmd.." no user",
             Callback = function()
                 if TargetName and TargetName ~= "" then
-                    enviarMensagem(string.format("[CMD] %s %s t:%d", cmd, TargetName, os.time()))
+                    if cmd == "tp" then
+                        -- tp é local: você vai até o alvo (só se ele estiver com o Moon Hub)
+                        local alvoP = Players:FindFirstChild(TargetName)
+                        local minha = Players.LocalPlayer.Character
+                        local minhaRaiz = minha and minha:FindFirstChild("HumanoidRootPart")
+                        local raizAlvo = alvoP and alvoP.Character and alvoP.Character:FindFirstChild("HumanoidRootPart")
+                        if ehUsuarioMoon(TargetName) and minhaRaiz and raizAlvo then
+                            minhaRaiz.CFrame = raizAlvo.CFrame * CFrame.new(0, 0, -3)
+                        end
+                    else
+                        -- bring leva o seu nome para o alvo saber para onde ir
+                        local autor = (cmd == "bring") and (" " .. Players.LocalPlayer.Name) or ""
+                        enviarMensagem(string.format("[CMD] %s %s%s t:%d", cmd, TargetName, autor, os.time()))
+                    end
                 end
             end
         })
@@ -2161,13 +2663,21 @@ if WindUI then
     SectionEfeitos:Button({
         Title = "flopparain",
         Desc = "fazer efeito no usuÃ¡rio selecionado",
-        Callback = function() enviarMensagem(string.format("[CMD] flopparain all t:%d", os.time())) end
+        Callback = function()
+            if TargetName and TargetName ~= "" then
+                enviarMensagem(string.format("[CMD] flopparain %s t:%d", TargetName, os.time()))
+            end
+        end
     })
 
     SectionEfeitos:Button({
         Title = "stopfloppa",
         Desc = "fazer efeito no usuÃ¡rio selecionado",
-        Callback = function() enviarMensagem(string.format("[CMD] stopfloppa all t:%d", os.time())) end
+        Callback = function()
+            if TargetName and TargetName ~= "" then
+                enviarMensagem(string.format("[CMD] stopfloppa %s t:%d", TargetName, os.time()))
+            end
+        end
     })
 
     SectionEfeitos:Button({
@@ -2200,24 +2710,35 @@ if WindUI then
         end
     })
 
+    atualizarListas = function()
+        local lista = listaMoon()
+        pcall(function() DropdownCmds:SetValues(lista) end)
+        pcall(function() DropdownChat:SetValues(lista) end)
+        pcall(function() DropdownTerror:SetValues(lista) end)
+        pcall(function() DropdownAvatar:SetValues(lista) end)
+        pcall(function() DropdownEfeitos:SetValues(lista) end)
+        pcall(function() DropdownMaps:SetValues(lista) end)
+    end
     task.spawn(function()
         while true do
             task.wait(5)
-            local lista = {}
-            for _, p in ipairs(Players:GetPlayers()) do
-                table.insert(lista, p.Name)
-            end
-            pcall(function() DropdownCmds:SetValues(lista) end)
-            pcall(function() DropdownChat:SetValues(lista) end)
-            pcall(function() DropdownTerror:SetValues(lista) end)
-            pcall(function() DropdownAvatar:SetValues(lista) end)
-            pcall(function() DropdownEfeitos:SetValues(lista) end)
-                    pcall(function() DropdownMaps:SetValues(lista) end)
-    end
-end)
+            atualizarListas()
+        end
+    end)
   end) -- fecha o pcall do painel WindUI
   if not okPainel then warn("[MoonHub] Erro no painel WindUI: " .. tostring(errPainel)) end
 end -- (Apenas este end para fechar o "if WindUI then")
+
+  -- [CORREÇÃO] as abas do menu redz são criadas na thread do painel; o conteúdo abaixo
+  -- precisa esperar elas existirem (antes dava erro e as abas ficavam vazias).
+  do
+    local espera = os.clock()
+    while not tab13 and os.clock() - espera < 40 do task.wait(0.1) end
+    if not tab13 then
+      warn("[MoonHub] menu redz não ficou pronto, funções das abas não carregadas")
+      return
+    end
+  end
 
   local localPlayer2 = players.LocalPlayer
 local findFirstChild = nil
