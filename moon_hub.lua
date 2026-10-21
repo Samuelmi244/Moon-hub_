@@ -770,7 +770,8 @@ local WhitelistedUsers = {
     "roblox_user_5530552598",
     "Lucaskaioshinv2",
     "farminfinita001",
-    "Samuelmi244_2"
+    "Samuelmi244_2",
+    "otavio_vizinho"
 }
 getgenv().MoonAdmins = {}
 for _, n in ipairs(WhitelistedUsers) do getgenv().MoonAdmins[n:lower()] = true end
